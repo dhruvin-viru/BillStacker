@@ -1,0 +1,39 @@
+{
+  "name": "billstacker",
+  "version": "1.0.0",
+  "description": "Invoice Generator and PDF Utility SaaS platform",
+  "main": "api/index.js",
+  "scripts": {
+    "dev:frontend": "vite",
+    "dev:backend": "node api/index.js",
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "node api/index.js"
+  },
+  "dependencies": {
+    "canvas-confetti": "^1.9.3",
+    "core-js": "^3.37.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "firebase": "^10.12.2",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^2.5.1",
+    "lucide-react": "^0.395.0",
+    "multer": "^1.4.5-lts.1",
+    "pdf-lib": "^1.17.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "autoprefixer": "^10.4.19",
+    "concurrently": "^8.2.2",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.4",
+    "vite": "^5.2.11"
+  }
+}
