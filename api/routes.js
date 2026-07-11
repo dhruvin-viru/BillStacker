@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const { mergePdfs, compressPdf, imagesToPdf } = require('./pdf-utils');
+const { mergePdfs, compressPdf, imagesToPdf, generateInvoicePdf } = require('./pdf-utils');
 const PaytmChecksum = require('paytmchecksum');
 const {
   createRateLimiter,
@@ -475,6 +475,123 @@ router.get('/telegram-info', publicLimiter, async (req, res) => {
   res.json({ success: true, username: 'BillStackerBot' }); // fallback
 });
 
+// Send Document / PDF buffer helper using multipart/form-data
+async function sendTelegramDocument(chatId, pdfBuffer, fileName, caption) {
+  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+  if (!BOT_TOKEN) {
+    console.error('[Telegram Error] TELEGRAM_BOT_TOKEN is not configured.');
+    return;
+  }
+
+  try {
+    const formData = new FormData();
+    const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
+    formData.append('chat_id', chatId);
+    formData.append('document', blob, fileName);
+    formData.append('caption', caption);
+    formData.append('parse_mode', 'Markdown');
+
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
+      method: 'POST',
+      body: formData
+    });
+  } catch (err) {
+    console.error('[Telegram sendDocument error]:', err);
+  }
+}
+
+// Session state database helpers
+async function getSession(chatId) {
+  const db = getFirestoreDb();
+  if (db) {
+    try {
+      const doc = await db.collection('telegram_sessions').doc(String(chatId)).get();
+      return doc.exists ? doc.data() : null;
+    } catch (err) {
+      console.error('[Session read error]:', err);
+    }
+  }
+  return null;
+}
+
+async function setSession(chatId, fields) {
+  const db = getFirestoreDb();
+  if (db) {
+    try {
+      await db.collection('telegram_sessions').doc(String(chatId)).set(
+        { ...fields, updatedAt: new Date().toISOString() },
+        { merge: true }
+      );
+    } catch (err) {
+      console.error('[Session set error]:', err);
+    }
+  }
+}
+
+async function deleteSession(chatId) {
+  const db = getFirestoreDb();
+  if (db) {
+    try {
+      await db.collection('telegram_sessions').doc(String(chatId)).delete();
+    } catch (err) {
+      console.error('[Session delete error]:', err);
+    }
+  }
+}
+
+// Reusable stats reporter command helper
+async function handleStatsCommand(chatId, userId, db, currencySymbol) {
+  try {
+    const snapshot = await db.collection('invoices').where('userId', '==', userId).get();
+    let total = 0;
+    let paid = 0;
+    let pending = 0;
+    let count = 0;
+
+    snapshot.forEach(doc => {
+      const inv = doc.data();
+      const grandTotal = Number(inv.totals?.grandTotal || 0);
+      total += grandTotal;
+      count++;
+      if (inv.status === 'paid') {
+        paid += grandTotal;
+      } else {
+        pending += grandTotal;
+      }
+    });
+
+    const msg = `📊 *BillStacker Billing Summary*\n\n` +
+      `• *Total Invoices:* ${count}\n` +
+      `• *Total Billed Amount:* ${currencySymbol}${total.toFixed(2)}\n` +
+      `• *Paid Amount:* ${currencySymbol}${paid.toFixed(2)} ✅\n` +
+      `• *Pending Balance:* ${currencySymbol}${pending.toFixed(2)} ⏳\n\n` +
+      `_Track all bills on billstacker.vercel.app_`;
+
+    await sendTelegramMessage(chatId, msg);
+  } catch (err) {
+    console.error('[Stats calculation error]:', err);
+    await sendTelegramMessage(chatId, `❌ *Error calculating stats.*`);
+  }
+}
+
+// GET Telegram Bot Info (to retrieve username dynamically for frontend deep links)
+router.get('/telegram-info', publicLimiter, async (req, res) => {
+  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+  if (!BOT_TOKEN) {
+    return res.json({ success: true, username: 'BillStackerBot' });
+  }
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`);
+    const data = await response.json();
+    if (data.ok && data.result) {
+      return res.json({ success: true, username: data.result.username });
+    }
+  } catch (err) {
+    console.error('getMe error:', err);
+  }
+  res.json({ success: true, username: 'BillStackerBot' }); // fallback
+});
+
 // POST Telegram Webhook Endpoint
 router.post('/telegram-webhook', publicLimiter, async (req, res) => {
   try {
@@ -486,30 +603,72 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
     const chatId = update.message.chat.id;
     const text = (update.message.text || '').trim();
 
-    // 1. Check for /start command
+    // Global Command Check: Cancel current session at any point
+    if (text.startsWith('/cancel')) {
+      await deleteSession(chatId);
+      await sendTelegramMessage(
+        chatId,
+        `❌ *Invoice Creation Cancelled*\n\nYour active session has been cleared. Use \`/generateinvoice\` to start a new one.`
+      );
+      return res.sendStatus(200);
+    }
+
+    // Check for start command (pairing flow)
     if (text.startsWith('/start')) {
+      const db = getFirestoreDb();
+      if (!db) {
+        await sendTelegramMessage(
+          chatId,
+          `❌ *Configuration Error*\n\nFirebase Admin SDK is not initialized.`
+        );
+        return res.sendStatus(200);
+      }
+
       const parts = text.split(' ');
       if (parts.length > 1) {
         const userUid = parts[1].trim();
 
-        // Perform pairing in Firestore
-        const db = getFirestoreDb();
-        if (!db) {
-          await sendTelegramMessage(
-            chatId,
-            `❌ *Configuration Error*\n\nFirebase Admin SDK is not initialized. Please configure the database service key.`
-          );
-          return res.sendStatus(200);
-        }
-
         try {
-          const profileRef = db.collection('profiles').doc(userUid);
-          const docSnap = await profileRef.get();
+          // 1. Check if this Telegram chat is already connected to a different website account
+          const tgSearch = await db.collection('profiles').where('telegramChatId', '==', String(chatId)).get();
+          if (!tgSearch.empty) {
+            const existingProfile = tgSearch.docs[0];
+            if (!existingProfile.id.startsWith('telegram_')) {
+              if (existingProfile.id === userUid) {
+                await sendTelegramMessage(
+                  chatId,
+                  `🎉 *Already Connected*\n\nYour Telegram account is already linked to this BillStacker account.`
+                );
+              } else {
+                await sendTelegramMessage(
+                  chatId,
+                  `❌ *Connection Rejected*\n\nThis Telegram account is already permanently linked to another BillStacker profile.`
+                );
+              }
+              return res.sendStatus(200);
+            }
+          }
 
-          if (docSnap.exists) {
-            await profileRef.update({ telegramChatId: String(chatId) });
+          // 2. Check if the target BillStacker website account is already connected to a different Telegram user
+          const webProfileRef = db.collection('profiles').doc(userUid);
+          const webProfileSnap = await webProfileRef.get();
+          if (webProfileSnap.exists) {
+            const webData = webProfileSnap.data();
+            if (webData.telegramChatId && webData.telegramChatId !== String(chatId)) {
+              await sendTelegramMessage(
+                chatId,
+                `❌ *Connection Rejected*\n\nThis BillStacker account is already permanently linked to a different Telegram user.`
+              );
+              return res.sendStatus(200);
+            }
+          }
+
+          // 3. Connect them! Update the website profile with the telegramChatId
+          if (webProfileSnap.exists) {
+            await webProfileRef.update({ telegramChatId: String(chatId) });
           } else {
-            await profileRef.set({
+            // Create profile if it didn't exist
+            await webProfileRef.set({
               telegramChatId: String(chatId),
               joinedDate: new Date().toISOString(),
               isPremium: false,
@@ -518,27 +677,62 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
             });
           }
 
+          // 4. Migrate bot-only invoices (if any) to the website user account
+          const botInvoicesSnapshot = await db.collection('invoices').where('userId', '==', `telegram_${chatId}`).get();
+          if (!botInvoicesSnapshot.empty) {
+            const batch = db.batch();
+            botInvoicesSnapshot.forEach(doc => {
+              batch.update(doc.ref, { userId: userUid });
+            });
+            await batch.commit();
+            console.log(`Migrated ${botInvoicesSnapshot.size} invoices from telegram_${chatId} to ${userUid}`);
+          }
+
+          // 5. Delete the temporary standalone bot profile if it exists
+          await db.collection('profiles').doc(`telegram_${chatId}`).delete();
+
           await sendTelegramMessage(
             chatId,
-            `🎉 *Welcome to BillStacker Bot!*\n\nYour account has been connected successfully.\n\nUse these commands to manage your records:\n• \`/invoices\` - List your recent invoices\n• \`/stats\` - View billing summaries`
+            `🎉 *Welcome to BillStacker! Link Successful.*\n\nYour account has been connected permanently. All invoices you generated on the bot are now synced with your web dashboard.\n\nUse these commands to manage your records:\n• \`/invoices\` - List your recent invoices\n• \`/stats\` - View billing summaries\n• \`/generateinvoice\` - Generate a new invoice`
           );
         } catch (dbErr) {
           console.error('[Telegram Webhook pairing error]:', dbErr);
           await sendTelegramMessage(
             chatId,
-            `❌ *Connection Failed*\n\nUnable to save pairing code in database.`
+            `❌ *Connection Failed*\n\nUnable to complete linking sequence.`
           );
         }
       } else {
-        await sendTelegramMessage(
-          chatId,
-          `👋 *Welcome to BillStacker Bot!*\n\nTo connect this bot to your account:\n1. Log in to [BillStacker](https://billstacker.vercel.app)\n2. Go to your *Profile* page\n3. Click *Connect Telegram Bot*`
-        );
+        // No UID provided: Check if already connected to a website profile
+        try {
+          const tgSearch = await db.collection('profiles').where('telegramChatId', '==', String(chatId)).get();
+          let isConnected = false;
+          if (!tgSearch.empty) {
+            const profileDoc = tgSearch.docs[0];
+            if (!profileDoc.id.startsWith('telegram_')) {
+              isConnected = true;
+            }
+          }
+
+          if (isConnected) {
+            await sendTelegramMessage(
+              chatId,
+              `🎉 *Your account is already connected to BillStacker!*\n\nUse these commands:\n• \`/invoices\` - List your recent invoices\n• \`/stats\` - View billing summaries\n• \`/generateinvoice\` - Generate a new invoice`
+            );
+          } else {
+            await sendTelegramMessage(
+              chatId,
+              `👋 *Welcome to BillStacker Bot!*\n\nTo connect this bot to your account:\n1. Log in to [BillStacker](https://billstacker.vercel.app)\n2. Go to your *Profile* page\n3. Click *Connect Telegram Bot*`
+            );
+          }
+        } catch (err) {
+          console.error('[Telegram webhook start check error]:', err);
+        }
       }
       return res.sendStatus(200);
     }
 
-    // 2. Fetch linked user profile
+    // Fetch linked user profile to verify connection / find current user identity
     const db = getFirestoreDb();
     if (!db) {
       await sendTelegramMessage(
@@ -551,26 +745,39 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
     let linkedProfile = null;
     let userId = null;
     try {
+      // A. Try to find a website profile connected to this telegramChatId
       const snapshot = await db.collection('profiles').where('telegramChatId', '==', String(chatId)).get();
       if (!snapshot.empty) {
         linkedProfile = snapshot.docs[0].data();
         userId = snapshot.docs[0].id;
+      } else {
+        // B. Check for a standalone bot profile `telegram_${chatId}`
+        const botProfileRef = db.collection('profiles').doc(`telegram_${chatId}`);
+        const botProfileSnap = await botProfileRef.get();
+        if (botProfileSnap.exists) {
+          linkedProfile = botProfileSnap.data();
+          userId = botProfileSnap.id;
+        } else {
+          // C. Not found: Create stand-alone bot profile on the fly!
+          linkedProfile = {
+            telegramChatId: String(chatId),
+            joinedDate: new Date().toISOString(),
+            isPremium: false,
+            currency: 'USD',
+            senderInfo: { name: 'Telegram Member', email: '' }
+          };
+          await botProfileRef.set(linkedProfile);
+          userId = `telegram_${chatId}`;
+        }
       }
     } catch (err) {
-      console.error('[Telegram check pairing error]:', err);
-    }
-
-    if (!linkedProfile) {
-      await sendTelegramMessage(
-        chatId,
-        `❌ *Account Not Connected*\n\nPlease link your Telegram account first:\n1. Open [BillStacker Profile](https://billstacker.vercel.app)\n2. Click *Connect Telegram Bot*`
-      );
+      console.error('[Telegram check profile/session error]:', err);
       return res.sendStatus(200);
     }
 
     const currencySymbol = linkedProfile.currency === 'INR' ? '₹' : linkedProfile.currency === 'EUR' ? '€' : '$';
 
-    // 3. Handle commands
+    // 1. Slash Commands
     if (text === '/invoices') {
       try {
         const snapshot = await db.collection('invoices').where('userId', '==', userId).get();
@@ -607,45 +814,230 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
         console.error('[Telegram Webhook fetch invoices error]:', err);
         await sendTelegramMessage(chatId, `❌ *Error fetching invoices.*`);
       }
-    } else if (text === '/stats') {
-      try {
-        const snapshot = await db.collection('invoices').where('userId', '==', userId).get();
-        let total = 0;
-        let paid = 0;
-        let pending = 0;
-        let count = 0;
+      return res.sendStatus(200);
+    } 
+    
+    if (text === '/stats') {
+      await handleStatsCommand(chatId, userId, db, currencySymbol);
+      return res.sendStatus(200);
+    }
 
-        snapshot.forEach(doc => {
-          const inv = doc.data();
-          const grandTotal = Number(inv.totals?.grandTotal || 0);
-          total += grandTotal;
-          count++;
-          if (inv.status === 'paid') {
-            paid += grandTotal;
-          } else {
-            pending += grandTotal;
-          }
-        });
+    if (text === '/generateinvoice') {
+      // Initialize a new invoice creation session
+      await setSession(chatId, {
+        step: 'awaiting_mode_choice',
+        userId,
+        profile: linkedProfile,
+        invoiceData: {
+          senderInfo: {},
+          clientInfo: {},
+          items: [],
+          currency: linkedProfile.currency || 'USD',
+          taxRate: 0,
+          discountRate: 0,
+          notes: ''
+        }
+      });
 
-        const msg = `📊 *BillStacker Billing Summary*\n\n` +
-          `• *Total Invoices:* ${count}\n` +
-          `• *Total Billed Amount:* ${currencySymbol}${total.toFixed(2)}\n` +
-          `• *Paid Amount:* ${currencySymbol}${paid.toFixed(2)} ✅\n` +
-          `• *Pending Balance:* ${currencySymbol}${pending.toFixed(2)} ⏳\n\n` +
-          `_Track all bills on billstacker.vercel.app_`;
-
-        await sendTelegramMessage(chatId, msg);
-      } catch (err) {
-        console.error('[Telegram Webhook stats calculation error]:', err);
-        await sendTelegramMessage(chatId, `❌ *Error calculating stats.*`);
-      }
-    } else {
-      // Default fallback info message
       await sendTelegramMessage(
         chatId,
-        `🤖 *BillStacker Assistant*\n\nAvailable commands:\n• \`/invoices\` - List recent invoices\n• \`/stats\` - View billing summaries\n• \`/start\` - Get instructions`
+        `⚙️ *Invoice Builder Configuration*\n\nDo you want to use your *default company profile settings* (Company Name, Address, Email, Phone, Currency) for this invoice?\n\nReply with:\n*1* - Use Default Profile Settings\n*2* - Enter Sender Details Manually`
       );
+      return res.sendStatus(200);
     }
+
+    // 2. Active Session State Processing (Interactive Questionnaire)
+    const session = await getSession(chatId);
+    if (session && session.step) {
+      const step = session.step;
+      const invoiceData = session.invoiceData || {};
+
+      switch (step) {
+        case 'awaiting_mode_choice':
+          if (text === '1') {
+            invoiceData.senderInfo = session.profile.senderInfo || {};
+            invoiceData.currency = session.profile.currency || 'USD';
+            await setSession(chatId, {
+              step: 'awaiting_client_name',
+              invoiceData
+            });
+            await sendTelegramMessage(chatId, `✅ *Default profile loaded.*\n\nPlease enter the *Client's Company / Name*:`);
+          } else if (text === '2') {
+            invoiceData.senderInfo = {};
+            await setSession(chatId, {
+              step: 'awaiting_sender_name',
+              invoiceData
+            });
+            await sendTelegramMessage(chatId, `📝 *Setting up sender details.* (Tip: You can set these defaults in the Web App Profile page)\n\nWhat is your *Company/Sender Name*?`);
+          } else {
+            await sendTelegramMessage(chatId, `⚠️ Invalid option. Please enter *1* to use your default profile settings, or *2* to type them manually.`);
+          }
+          break;
+
+        case 'awaiting_sender_name':
+          invoiceData.senderInfo.name = text;
+          await setSession(chatId, { step: 'awaiting_sender_email', invoiceData });
+          await sendTelegramMessage(chatId, `What is your *Company Billing Email*? (or type *skip*)`);
+          break;
+
+        case 'awaiting_sender_email':
+          if (text.toLowerCase() !== 'skip') {
+            invoiceData.senderInfo.email = text;
+          }
+          await setSession(chatId, { step: 'awaiting_sender_address', invoiceData });
+          await sendTelegramMessage(chatId, `What is your *Company Address*? (or type *skip*)`);
+          break;
+
+        case 'awaiting_sender_address':
+          if (text.toLowerCase() !== 'skip') {
+            invoiceData.senderInfo.address = text;
+          }
+          await setSession(chatId, { step: 'awaiting_sender_phone', invoiceData });
+          await sendTelegramMessage(chatId, `What is your *Company Phone Number*? (or type *skip*)`);
+          break;
+
+        case 'awaiting_sender_phone':
+          if (text.toLowerCase() !== 'skip') {
+            invoiceData.senderInfo.phone = text;
+          }
+          await setSession(chatId, { step: 'awaiting_currency', invoiceData });
+          await sendTelegramMessage(chatId, `Which *currency* do you want to use? (e.g. USD, EUR, INR, CAD) [Default: USD]`);
+          break;
+
+        case 'awaiting_currency':
+          invoiceData.currency = ['USD', 'EUR', 'INR', 'GBP', 'CAD', 'AUD'].includes(text.toUpperCase())
+            ? text.toUpperCase()
+            : 'USD';
+          await setSession(chatId, { step: 'awaiting_client_name', invoiceData });
+          await sendTelegramMessage(chatId, `Currency set to *${invoiceData.currency}*.\n\nPlease enter the *Client's Company / Name*:`);
+          break;
+
+        case 'awaiting_client_name':
+          invoiceData.clientInfo.name = text;
+          await setSession(chatId, { step: 'awaiting_client_email', invoiceData });
+          await sendTelegramMessage(chatId, `What is the *Client's Email*? (or type *skip*)`);
+          break;
+
+        case 'awaiting_client_email':
+          if (text.toLowerCase() !== 'skip') {
+            invoiceData.clientInfo.email = text;
+          }
+          await setSession(chatId, { step: 'awaiting_client_address', invoiceData });
+          await sendTelegramMessage(chatId, `What is the *Client's Physical/Billing Address*? (or type *skip*)`);
+          break;
+
+        case 'awaiting_client_address':
+          if (text.toLowerCase() !== 'skip') {
+            invoiceData.clientInfo.address = text;
+          }
+          await setSession(chatId, { step: 'awaiting_item_name', invoiceData });
+          await sendTelegramMessage(chatId, `Client details stored.\n\nNow, let's add billing items.\n\nEnter the *name or description* of the first item:`);
+          break;
+
+        case 'awaiting_item_name':
+          const currentItem = { description: text };
+          await setSession(chatId, { step: 'awaiting_item_qty', currentItem });
+          await sendTelegramMessage(chatId, `What is the *quantity* of this item? (Enter a number)`);
+          break;
+
+        case 'awaiting_item_qty':
+          const qty = parseInt(text) || 1;
+          session.currentItem.quantity = qty;
+          await setSession(chatId, { step: 'awaiting_item_rate', currentItem: session.currentItem });
+          await sendTelegramMessage(chatId, `What is the *unit price/rate* for this item?`);
+          break;
+
+        case 'awaiting_item_rate':
+          const rate = parseFloat(text) || 0.0;
+          session.currentItem.rate = rate;
+          invoiceData.items.push(session.currentItem);
+          await setSession(chatId, {
+            step: 'awaiting_add_more_confirm',
+            invoiceData,
+            currentItem: null
+          });
+          await sendTelegramMessage(
+            chatId,
+            `✅ Item added.\n\nDo you want to add another item?\n*1* - Yes, add another item\n*2* - No, finish and compile PDF`
+          );
+          break;
+
+        case 'awaiting_add_more_confirm':
+          if (text === '1') {
+            await setSession(chatId, { step: 'awaiting_item_name' });
+            await sendTelegramMessage(chatId, `Enter the *name or description* of the next item:`);
+          } else if (text === '2') {
+            await setSession(chatId, { step: 'awaiting_notes' });
+            await sendTelegramMessage(chatId, `Enter any optional *payment notes or terms* (or type *skip*):`);
+          } else {
+            await sendTelegramMessage(chatId, `Please type *1* (Add more items) or *2* (No, finish).`);
+          }
+          break;
+
+        case 'awaiting_notes':
+          if (text.toLowerCase() !== 'skip') {
+            invoiceData.notes = text;
+          }
+
+          // Complete calculation and invoice payload composition
+          const subtotal = invoiceData.items.reduce((sum, it) => sum + (it.quantity * it.rate), 0);
+          invoiceData.invoiceNumber = 'INV-' + Math.floor(1000 + Math.random() * 9000);
+          invoiceData.createdAt = new Date().toISOString();
+          invoiceData.dueDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(); // 14 days default
+          invoiceData.status = 'pending';
+          invoiceData.totals = {
+            subtotal,
+            taxAmount: 0,
+            discountAmount: 0,
+            grandTotal: subtotal
+          };
+
+          await sendTelegramMessage(chatId, `⏳ *Compiling and saving invoice ${invoiceData.invoiceNumber}...*`);
+
+          try {
+            // 1. Save to Cloud Firestore
+            await db.collection('invoices').add({
+              ...invoiceData,
+              userId: session.userId
+            });
+
+            // 2. Generate PDF bytes using pdf-lib
+            const pdfBytes = await generateInvoicePdf(invoiceData);
+
+            // 3. Send PDF document file as response
+            await sendTelegramDocument(
+              chatId,
+              pdfBytes,
+              `${invoiceData.invoiceNumber}.pdf`,
+              `🎉 *Invoice generated successfully!* Attached is your PDF.`
+            );
+
+            // 4. Delete the active conversation session
+            await deleteSession(chatId);
+
+            // 5. Automatically run stats command
+            const sym = invoiceData.currency === 'INR' ? '₹' : invoiceData.currency === 'EUR' ? '€' : '$';
+            await handleStatsCommand(chatId, session.userId, db, sym);
+
+          } catch (genErr) {
+            console.error('[Telegram Webhook Generation Error]:', genErr);
+            await sendTelegramMessage(chatId, `❌ *Generation Failed*: Unable to compile or save document.`);
+            await deleteSession(chatId);
+          }
+          break;
+
+        default:
+          await deleteSession(chatId);
+          break;
+      }
+      return res.sendStatus(200);
+    }
+
+    // Default Fallback Info Message
+    await sendTelegramMessage(
+      chatId,
+      `🤖 *BillStacker Assistant*\n\nAvailable commands:\n• \`/invoices\` - List recent invoices\n• \`/stats\` - View billing summaries\n• \`/generateinvoice\` - Generate an invoice interactively\n• \`/start\` - Get instructions`
+    );
   } catch (err) {
     console.error('[Webhook error]:', err);
   }
