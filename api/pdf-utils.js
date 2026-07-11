@@ -301,12 +301,28 @@ async function generateInvoicePdf(invoiceData) {
   // Totals Block
   let totY = rowY - 5;
   const subtotal = Number(invoiceData.totals?.subtotal || 0);
+  const taxRate = parseFloat(invoiceData.taxRate || 0);
+  const discountRate = parseFloat(invoiceData.discountRate || 0);
+  const taxAmount = Number(invoiceData.totals?.taxAmount || 0);
+  const discountAmount = Number(invoiceData.totals?.discountAmount || 0);
   const grandTotal = Number(invoiceData.totals?.grandTotal || 0);
 
   page.drawText('Subtotal:', { x: 380, y: totY, size: 9, font });
   page.drawText(`${symbol} ${subtotal.toFixed(2)}`, { x: 500, y: totY, size: 9, font });
-
   totY -= 15;
+
+  if (taxAmount > 0) {
+    page.drawText(`Tax (${taxRate}%):`, { x: 380, y: totY, size: 9, font });
+    page.drawText(`${symbol} ${taxAmount.toFixed(2)}`, { x: 500, y: totY, size: 9, font });
+    totY -= 15;
+  }
+
+  if (discountAmount > 0) {
+    page.drawText(`Discount (${discountRate}%):`, { x: 380, y: totY, size: 9, font });
+    page.drawText(`-${symbol} ${discountAmount.toFixed(2)}`, { x: 500, y: totY, size: 9, font, color: rgb(0.8, 0.1, 0.1) });
+    totY -= 15;
+  }
+
   page.drawLine({
     start: { x: 380, y: totY + 10 },
     end: { x: width - 50, y: totY + 10 },

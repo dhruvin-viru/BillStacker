@@ -574,23 +574,21 @@ async function handleStatsCommand(chatId, userId, db, currencySymbol) {
   }
 }
 
-// GET Telegram Bot Info (to retrieve username dynamically for frontend deep links)
-router.get('/telegram-info', publicLimiter, async (req, res) => {
-  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-  if (!BOT_TOKEN) {
-    return res.json({ success: true, username: 'BillStackerBot' });
-  }
+// Fail-safe helper to fetch latest invoice number (JS sorted)
+async function getLatestInvoiceNumber(db, userId) {
   try {
-    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`);
-    const data = await response.json();
-    if (data.ok && data.result) {
-      return res.json({ success: true, username: data.result.username });
+    const snapshot = await db.collection('invoices').where('userId', '==', userId).get();
+    if (!snapshot.empty) {
+      const list = [];
+      snapshot.forEach(doc => list.push(doc.data()));
+      list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return list[0].invoiceNumber || 'None';
     }
   } catch (err) {
-    console.error('getMe error:', err);
+    console.error('[Latest Invoice Fetch Error]:', err);
   }
-  res.json({ success: true, username: 'BillStackerBot' }); // fallback
-});
+  return 'None';
+}
 
 // POST Telegram Webhook Endpoint
 router.post('/telegram-webhook', publicLimiter, async (req, res) => {
@@ -603,12 +601,33 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
     const chatId = update.message.chat.id;
     const text = (update.message.text || '').trim();
 
+    // 1. Photo Attachment Check: Intercept photo uploads for image-to-PDF compilation
+    if (update.message.photo) {
+      const session = await getSession(chatId);
+      if (session && session.step === 'awaiting_images') {
+        const fileId = update.message.photo[update.message.photo.length - 1].file_id;
+        const images = session.images || [];
+        images.push(fileId);
+        await setSession(chatId, { images });
+        await sendTelegramMessage(
+          chatId,
+          `📸 *Image ${images.length} received!*\n\nSend another image, or send \`/done\` (or type *done*) when you are finished.`
+        );
+      } else {
+        await sendTelegramMessage(
+          chatId,
+          `🤖 *Need Image to PDF?*\n\nIf you want to compile images into a PDF, please trigger the \`/imagetopdf\` command first.`
+        );
+      }
+      return res.sendStatus(200);
+    }
+
     // Global Command Check: Cancel current session at any point
     if (text.startsWith('/cancel')) {
       await deleteSession(chatId);
       await sendTelegramMessage(
         chatId,
-        `❌ *Invoice Creation Cancelled*\n\nYour active session has been cleared. Use \`/generateinvoice\` to start a new one.`
+        `❌ *Session Cancelled*\n\nYour active session has been cleared. Use \`/generateinvoice\`, \`/imagetopdf\`, or \`/updateinvoice\` to start.`
       );
       return res.sendStatus(200);
     }
@@ -717,7 +736,7 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
           if (isConnected) {
             await sendTelegramMessage(
               chatId,
-              `🎉 *Your account is already connected to BillStacker!*\n\nUse these commands:\n• \`/invoices\` - List your recent invoices\n• \`/stats\` - View billing summaries\n• \`/generateinvoice\` - Generate a new invoice`
+              `🎉 *Your account is already connected to BillStacker!*\n\nUse these commands:\n• \`/invoices\` - List your recent invoices\n• \`/stats\` - View billing summaries\n• \`/generateinvoice\` - Generate a new invoice\n• \`/updateinvoice\` - Update an invoice status\n• \`/imagetopdf\` - Compile photos into a PDF`
             );
           } else {
             await sendTelegramMessage(
@@ -800,7 +819,7 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
           const client = inv.clientInfo?.name || 'Unnamed Client';
           const total = Number(inv.totals?.grandTotal || 0).toFixed(2);
           const status = (inv.status || 'pending').toUpperCase();
-          const statusEmoji = status === 'PAID' ? '✅' : '⏳';
+          const statusEmoji = status === 'PAID' ? '✅' : status === 'OVERDUE' ? '🛑' : '⏳';
 
           msg += `${index + 1}. *${invNum}* | ${client}\n   ${statusEmoji} Status: *${status}* | *${currencySymbol}${total}*\n\n`;
         });
@@ -846,22 +865,137 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
       return res.sendStatus(200);
     }
 
+    if (text === '/imagetopdf') {
+      await setSession(chatId, {
+        step: 'awaiting_images',
+        images: []
+      });
+      await sendTelegramMessage(
+        chatId,
+        `📸 *Image to PDF Converter*\n\nPlease send me the images you want to compile (as photo attachments, one by one).\n\nWhen you are finished, reply with *done* (or send \`/done\`).\n\nIf you wish to cancel, send \`/cancel\`.`
+      );
+      return res.sendStatus(200);
+    }
+
+    if (text === '/updateinvoice' || text.startsWith('/updateinvoice ')) {
+      const parts = text.split(' ');
+      if (parts.length > 1) {
+        const billNo = parts[1].trim();
+        try {
+          const invSnap = await db.collection('invoices')
+            .where('userId', '==', userId)
+            .where('invoiceNumber', '==', billNo)
+            .get();
+          if (invSnap.empty) {
+            await sendTelegramMessage(chatId, `❌ Invoice *${billNo}* was not found. Please trigger \`/updateinvoice\` to search manually.`);
+            return res.sendStatus(200);
+          }
+          await setSession(chatId, {
+            step: 'awaiting_update_invoice_status',
+            targetInvoiceId: invSnap.docs[0].id,
+            targetInvoiceNumber: billNo,
+            userId
+          });
+          await sendTelegramMessage(
+            chatId,
+            `Found Invoice *${billNo}*.\n\nWhat status would you like to set?\n\nReply with:\n*1* - Paid ✅\n*2* - Unpaid/Pending ⏳\n*3* - Overdue 🛑`
+          );
+        } catch (err) {
+          console.error('[Error setting status with shortcut]:', err);
+          await sendTelegramMessage(chatId, `❌ An error occurred searching for your invoice.`);
+        }
+      } else {
+        await setSession(chatId, {
+          step: 'awaiting_update_invoice_number',
+          userId
+        });
+        await sendTelegramMessage(
+          chatId,
+          `✏️ *Update Invoice Status*\n\nPlease enter the *Invoice Number* of the bill you want to update (e.g. INV-1002):`
+        );
+      }
+      return res.sendStatus(200);
+    }
+
     // 2. Active Session State Processing (Interactive Questionnaire)
     const session = await getSession(chatId);
     if (session && session.step) {
       const step = session.step;
       const invoiceData = session.invoiceData || {};
 
+      // Done command logic for image conversion
+      if (step === 'awaiting_images' && (text === '/done' || text.toLowerCase() === 'done')) {
+        const images = session.images || [];
+        if (images.length === 0) {
+          await sendTelegramMessage(chatId, `⚠️ No images received. Please send at least one image photo attachment first.`);
+          return res.sendStatus(200);
+        }
+
+        await sendTelegramMessage(chatId, `⏳ *Downloading and compiling ${images.length} images into a PDF...*`);
+
+        const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+        if (!BOT_TOKEN) {
+          await sendTelegramMessage(chatId, `❌ *Configuration Error*: Telegram Bot Token is missing.`);
+          await deleteSession(chatId);
+          return res.sendStatus(200);
+        }
+
+        try {
+          const files = [];
+          for (let i = 0; i < images.length; i++) {
+            const fileId = images[i];
+            const fileInfoRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`);
+            const fileInfo = await fileInfoRes.json();
+            if (fileInfo.ok && fileInfo.result) {
+              const filePath = fileInfo.result.file_path;
+              const fileRes = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`);
+              const fileBuffer = Buffer.from(await fileRes.arrayBuffer());
+              files.push({
+                buffer: fileBuffer,
+                mimetype: 'image/jpeg'
+              });
+            }
+          }
+
+          if (files.length === 0) {
+            await sendTelegramMessage(chatId, `❌ Failed to download any of the sent images. Please try again.`);
+            await deleteSession(chatId);
+            return res.sendStatus(200);
+          }
+
+          const pdfBytes = await imagesToPdf(files, { orientation: 'portrait', margin: 'none', isPremium: false });
+          await sendTelegramDocument(chatId, pdfBytes, 'compiled_images.pdf', `📄 *Images compiled successfully!* Here is your PDF.`);
+          await deleteSession(chatId);
+        } catch (pdfErr) {
+          console.error('[Telegram image to pdf compilation error]:', pdfErr);
+          await sendTelegramMessage(chatId, `❌ *Compilation Failed*: An error occurred while assembling the images into a PDF.`);
+          await deleteSession(chatId);
+        }
+        return res.sendStatus(200);
+      }
+
       switch (step) {
+        case 'awaiting_images':
+          await sendTelegramMessage(
+            chatId,
+            `⚠️ Please send images as photo attachments, or reply with *done* (or send \`/done\`) to compile the PDF.`
+          );
+          break;
+
         case 'awaiting_mode_choice':
           if (text === '1') {
             invoiceData.senderInfo = session.profile.senderInfo || {};
             invoiceData.currency = session.profile.currency || 'USD';
+            
+            const lastNum = await getLatestInvoiceNumber(db, session.userId);
             await setSession(chatId, {
-              step: 'awaiting_client_name',
+              step: 'awaiting_invoice_number',
               invoiceData
             });
-            await sendTelegramMessage(chatId, `✅ *Default profile loaded.*\n\nPlease enter the *Client's Company / Name*:`);
+            await sendTelegramMessage(
+              chatId,
+              `✅ *Default profile loaded.*\n\nPlease enter the *Invoice Number* (e.g. INV-1002):\n\n💡 *Last invoice number:* ${lastNum}\n\nType *skip* to generate a random number.`
+            );
           } else if (text === '2') {
             invoiceData.senderInfo = {};
             await setSession(chatId, {
@@ -908,8 +1042,23 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
           invoiceData.currency = ['USD', 'EUR', 'INR', 'GBP', 'CAD', 'AUD'].includes(text.toUpperCase())
             ? text.toUpperCase()
             : 'USD';
+            
+          const lastNum = await getLatestInvoiceNumber(db, session.userId);
+          await setSession(chatId, { step: 'awaiting_invoice_number', invoiceData });
+          await sendTelegramMessage(
+            chatId,
+            `Currency set to *${invoiceData.currency}*.\n\nPlease enter the *Invoice Number* (e.g. INV-1002):\n\n💡 *Last invoice number:* ${lastNum}\n\nType *skip* to generate a random number.`
+          );
+          break;
+
+        case 'awaiting_invoice_number':
+          if (text.toLowerCase() === 'skip') {
+            invoiceData.invoiceNumber = 'INV-' + Math.floor(1000 + Math.random() * 9000);
+          } else {
+            invoiceData.invoiceNumber = text;
+          }
           await setSession(chatId, { step: 'awaiting_client_name', invoiceData });
-          await sendTelegramMessage(chatId, `Currency set to *${invoiceData.currency}*.\n\nPlease enter the *Client's Company / Name*:`);
+          await sendTelegramMessage(chatId, `Invoice number set to *${invoiceData.invoiceNumber}*.\n\nPlease enter the *Client's Company / Name*:`);
           break;
 
         case 'awaiting_client_name':
@@ -930,8 +1079,46 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
           if (text.toLowerCase() !== 'skip') {
             invoiceData.clientInfo.address = text;
           }
+          await setSession(chatId, { step: 'awaiting_invoice_date', invoiceData });
+          await sendTelegramMessage(chatId, `Please enter the *Invoice Date* (YYYY-MM-DD), or type *skip* to use today's date:`);
+          break;
+
+        case 'awaiting_invoice_date':
+          let invDate = new Date();
+          if (text.toLowerCase() !== 'skip') {
+            const parsed = new Date(text);
+            if (!isNaN(parsed.getTime())) {
+              invDate = parsed;
+            }
+          }
+          invoiceData.createdAt = invDate.toISOString();
+          await setSession(chatId, { step: 'awaiting_due_date', invoiceData });
+          await sendTelegramMessage(chatId, `Please enter the *Due Date* (YYYY-MM-DD), or type *skip* to default to 14 days from now:`);
+          break;
+
+        case 'awaiting_due_date':
+          let dueDate = new Date(new Date(invoiceData.createdAt).getTime() + 14 * 24 * 60 * 60 * 1000);
+          if (text.toLowerCase() !== 'skip') {
+            const parsed = new Date(text);
+            if (!isNaN(parsed.getTime())) {
+              dueDate = parsed;
+            }
+          }
+          invoiceData.dueDate = dueDate.toISOString();
+          await setSession(chatId, { step: 'awaiting_tax_rate', invoiceData });
+          await sendTelegramMessage(chatId, `Please enter the *Tax Rate (%)* (e.g. 5 or 18), or type *0* to skip:`);
+          break;
+
+        case 'awaiting_tax_rate':
+          invoiceData.taxRate = parseFloat(text) || 0;
+          await setSession(chatId, { step: 'awaiting_discount_rate', invoiceData });
+          await sendTelegramMessage(chatId, `Please enter the *Discount Rate (%)* (e.g. 10), or type *0* to skip:`);
+          break;
+
+        case 'awaiting_discount_rate':
+          invoiceData.discountRate = parseFloat(text) || 0;
           await setSession(chatId, { step: 'awaiting_item_name', invoiceData });
-          await sendTelegramMessage(chatId, `Client details stored.\n\nNow, let's add billing items.\n\nEnter the *name or description* of the first item:`);
+          await sendTelegramMessage(chatId, `Configuration details saved!\n\nLet's add billing items.\n\nEnter the *name or description* of the first item:`);
           break;
 
         case 'awaiting_item_name':
@@ -981,15 +1168,18 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
 
           // Complete calculation and invoice payload composition
           const subtotal = invoiceData.items.reduce((sum, it) => sum + (it.quantity * it.rate), 0);
-          invoiceData.invoiceNumber = 'INV-' + Math.floor(1000 + Math.random() * 9000);
-          invoiceData.createdAt = new Date().toISOString();
-          invoiceData.dueDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(); // 14 days default
+          const tRate = parseFloat(invoiceData.taxRate || 0);
+          const dRate = parseFloat(invoiceData.discountRate || 0);
+          const taxAmount = parseFloat(((subtotal * tRate) / 100).toFixed(2));
+          const discountAmount = parseFloat(((subtotal * dRate) / 100).toFixed(2));
+          const grandTotal = parseFloat((subtotal + taxAmount - discountAmount).toFixed(2));
+
           invoiceData.status = 'pending';
           invoiceData.totals = {
             subtotal,
-            taxAmount: 0,
-            discountAmount: 0,
-            grandTotal: subtotal
+            taxAmount,
+            discountAmount,
+            grandTotal
           };
 
           await sendTelegramMessage(chatId, `⏳ *Compiling and saving invoice ${invoiceData.invoiceNumber}...*`);
@@ -1026,6 +1216,59 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
           }
           break;
 
+        case 'awaiting_update_invoice_number':
+          try {
+            const invSnap = await db.collection('invoices')
+              .where('userId', '==', session.userId)
+              .where('invoiceNumber', '==', text)
+              .get();
+            if (invSnap.empty) {
+              await sendTelegramMessage(chatId, `❌ Invoice *${text}* was not found. Please check the spelling and try again, or send \`/cancel\` to abort.`);
+            } else {
+              await setSession(chatId, {
+                step: 'awaiting_update_invoice_status',
+                targetInvoiceId: invSnap.docs[0].id,
+                targetInvoiceNumber: text
+              });
+              await sendTelegramMessage(
+                chatId,
+                `Found Invoice *${text}*.\n\nWhat status would you like to set?\n\nReply with:\n*1* - Paid ✅\n*2* - Unpaid/Pending ⏳\n*3* - Overdue 🛑`
+              );
+            }
+          } catch (err) {
+            console.error('[Session update invoice find error]:', err);
+            await sendTelegramMessage(chatId, `❌ An error occurred while searching. Please try again.`);
+          }
+          break;
+
+        case 'awaiting_update_invoice_status':
+          let statusStr = '';
+          if (text === '1') {
+            statusStr = 'paid';
+          } else if (text === '2') {
+            statusStr = 'pending';
+          } else if (text === '3') {
+            statusStr = 'overdue';
+          } else {
+            await sendTelegramMessage(chatId, `⚠️ Invalid option. Please reply with *1* (Paid), *2* (Pending), or *3* (Overdue).`);
+            return res.sendStatus(200);
+          }
+
+          try {
+            await db.collection('invoices').doc(session.targetInvoiceId).update({ status: statusStr });
+            await sendTelegramMessage(chatId, `✅ Success! Invoice status successfully updated to *${statusStr.toUpperCase()}*.`);
+            await deleteSession(chatId);
+
+            // Automatically run stats summary
+            const sym = currencySymbol;
+            await handleStatsCommand(chatId, session.userId, db, sym);
+          } catch (err) {
+            console.error('[Session update invoice status write error]:', err);
+            await sendTelegramMessage(chatId, `❌ Failed to update status in database.`);
+            await deleteSession(chatId);
+          }
+          break;
+
         default:
           await deleteSession(chatId);
           break;
@@ -1036,7 +1279,7 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
     // Default Fallback Info Message
     await sendTelegramMessage(
       chatId,
-      `🤖 *BillStacker Assistant*\n\nAvailable commands:\n• \`/invoices\` - List recent invoices\n• \`/stats\` - View billing summaries\n• \`/generateinvoice\` - Generate an invoice interactively\n• \`/start\` - Get instructions`
+      `🤖 *BillStacker Assistant*\n\nAvailable commands:\n• \`/invoices\` - List recent invoices\n• \`/stats\` - View billing summaries\n• \`/generateinvoice\` - Generate an invoice interactively\n• \`/updateinvoice\` - Update an invoice status\n• \`/imagetopdf\` - Compile photos into a PDF\n• \`/start\` - Get instructions`
     );
   } catch (err) {
     console.error('[Webhook error]:', err);
