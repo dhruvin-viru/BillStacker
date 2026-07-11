@@ -8,16 +8,52 @@
     <!-- Modern Google Font: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <!-- <script src="https://checkout.razorpay.com/v1/checkout.js"></script> -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script type="application/javascript" crossorigin="anonymous" src="https://securestage.paytmpayments.com/merchantpgpui/checkoutjs/merchants/MgeNKs02477629003335.js"></script>
     <style>
       body {
         font-family: 'Inter', sans-serif;
       }
+      h1, h2, h3, h4, h5, h6 {
+        font-family: 'Outfit', sans-serif;
+      }
     </style>
+    
+    <!-- JSON-LD Structured Schema Markup -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "BillStacker",
+      "operatingSystem": "All",
+      "applicationCategory": "BusinessApplication",
+      "description": "Premium open-source Invoice Builder & PDF Utilities SaaS. Generate, merge, and convert files instantly with live preview templates.",
+      "offers": {
+        "@type": "AggregateOffer",
+        "lowPrice": "0.00",
+        "highPrice": "9.00",
+        "priceCurrency": "USD",
+        "offers": [
+          {
+            "@type": "Offer",
+            "name": "Free Plan",
+            "price": "0.00",
+            "priceCurrency": "USD"
+          },
+          {
+            "@type": "Offer",
+            "name": "Premium Plan",
+            "price": "9.00",
+            "priceCurrency": "USD"
+          }
+        ]
+      }
+    }
+    </script>
   </head>
   <body class="bg-slate-950 text-slate-100 antialiased overflow-x-hidden min-h-screen">
     <div id="root"></div>
+
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

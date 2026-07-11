@@ -16,7 +16,6 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// API Router registration
 app.use('/api', apiRoutes);
 
 // Simple message for root endpoint

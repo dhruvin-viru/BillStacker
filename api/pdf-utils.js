@@ -1,4 +1,4 @@
-const { PDFDocument } = require('pdf-lib');
+const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 
 /**
  * Merges multiple PDF buffers into a single PDF
@@ -78,7 +78,90 @@ async function compressPdf(buffer, compressionLevel = 'medium') {
   return compressedBytes;
 }
 
+/**
+ * Converts multiple image buffers into a single A4 PDF
+ * @param {Array<{buffer: Buffer, mimetype: string}>} files - Array of image file objects
+ * @param {Object} options - { orientation: 'portrait'|'landscape', margin: 'none'|'small'|'large' }
+ * @returns {Promise<Uint8Array>} - Generated PDF bytes
+ */
+async function imagesToPdf(files, options = {}) {
+  if (!files || files.length === 0) {
+    throw new Error('No images provided for compilation.');
+  }
+
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+  // A4 dimensions in points (72 points = 1 inch)
+  const isLandscape = options.orientation === 'landscape';
+  const pageWidth = isLandscape ? 841.89 : 595.28;
+  const pageHeight = isLandscape ? 595.28 : 841.89;
+
+  let margin = 0;
+  if (options.margin === 'small') {
+    margin = 20;
+  } else if (options.margin === 'large') {
+    margin = 50;
+  }
+
+  const contentWidth = pageWidth - (margin * 2);
+  const contentHeight = pageHeight - (margin * 2);
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    let embeddedImage;
+
+    try {
+      if (file.mimetype === 'image/png') {
+        embeddedImage = await pdfDoc.embedPng(file.buffer);
+      } else {
+        // Fallback to Jpg for jpeg/webp/etc.
+        embeddedImage = await pdfDoc.embedJpg(file.buffer);
+      }
+    } catch (err) {
+      // If embedPng/Jpg fails directly, try the other as fallback
+      try {
+        if (file.mimetype === 'image/png') {
+          embeddedImage = await pdfDoc.embedJpg(file.buffer);
+        } else {
+          embeddedImage = await pdfDoc.embedPng(file.buffer);
+        }
+      } catch (err2) {
+        throw new Error(`Failed to embed image at page ${i + 1}: unsupported or corrupt format.`);
+      }
+    }
+
+    const imgW = embeddedImage.width;
+    const imgH = embeddedImage.height;
+
+    // Scale ratio to fit content boundaries
+    const widthRatio = contentWidth / imgW;
+    const heightRatio = contentHeight / imgH;
+    const scaleFactor = Math.min(widthRatio, heightRatio);
+
+    const scaledWidth = imgW * scaleFactor;
+    const scaledHeight = imgH * scaleFactor;
+
+    // Center on page
+    const xPos = margin + ((contentWidth - scaledWidth) / 2);
+    const yPos = margin + ((contentHeight - scaledHeight) / 2);
+
+    const page = pdfDoc.addPage([pageWidth, pageHeight]);
+    page.drawImage(embeddedImage, {
+      x: xPos,
+      y: yPos,
+      width: scaledWidth,
+      height: scaledHeight
+    });
+
+    // Watermark removed per user request for free tier
+  }
+
+  return await pdfDoc.save({ useObjectStreams: true });
+}
+
 module.exports = {
   mergePdfs,
   compressPdf,
+  imagesToPdf,
 };

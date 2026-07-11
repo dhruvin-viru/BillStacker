@@ -4,12 +4,14 @@ import {
   dbGetDefaultProfile, 
   dbGetInvoices,
   signInWithGoogle,
-  signOutUser
+  signOutUser,
+  dbUpdateAvatar
 } from '../firebase';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Label, Input } from './ui/input';
 import { Button } from './ui/button';
 import { useToast } from './ui/toast';
+import SupportFeedback from './SupportFeedback';
 import { 
   User, 
   Mail, 
@@ -20,7 +22,8 @@ import {
   LogOut, 
   ShieldCheck, 
   Save, 
-  LogIn 
+  LogIn,
+  Camera
 } from 'lucide-react';
 
 export default function Profile({ currentUser, onProfileUpdate }) {
@@ -39,10 +42,78 @@ export default function Profile({ currentUser, onProfileUpdate }) {
       method: '',
       terms: ''
     },
-    isPremium: false
+    isPremium: false,
+    photoURL: ''
   });
   const [exchangeRates, setExchangeRates] = useState({ USD: 1, INR: 83.3, EUR: 0.92 });
+  const [botUsername, setBotUsername] = useState('BillStackerBot');
   const { toast } = useToast();
+
+  const DEFAULT_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%237c3aed'><circle cx='12' cy='8' r='4'/><path d='M12 14c-6.1 0-8 4-8 4h16s-1.9-4-8-4z'/></svg>";
+
+  const handleAvatarChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast({
+        title: 'Invalid File',
+        description: 'Please upload an image file.',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    try {
+      setLoading(true);
+      
+      const compressAvatar = (imgFile) => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const img = new Image();
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              const ctx = canvas.getContext('2d');
+              canvas.width = 120;
+              canvas.height = 120;
+              const size = Math.min(img.width, img.height);
+              ctx.drawImage(
+                img,
+                (img.width - size) / 2, (img.height - size) / 2, size, size,
+                0, 0, 120, 120
+              );
+              resolve(canvas.toDataURL('image/jpeg', 0.85));
+            };
+            img.onerror = () => reject(new Error('Failed to load image element.'));
+            img.src = event.target?.result;
+          };
+          reader.onerror = () => reject(new Error('Failed to read file.'));
+          reader.readAsDataURL(imgFile);
+        });
+      };
+
+      const base64Avatar = await compressAvatar(file);
+      await dbUpdateAvatar(currentUser.uid, base64Avatar);
+
+      toast({
+        title: 'Avatar Updated',
+        description: 'Your profile picture has been updated successfully.',
+        variant: 'success'
+      });
+      
+      setProfile(prev => ({ ...prev, photoURL: base64Avatar }));
+      if (onProfileUpdate) onProfileUpdate({ ...profile, isPremium: profile.isPremium, photoURL: base64Avatar });
+    } catch (err) {
+      toast({
+        title: 'Upload Failed',
+        description: err.message,
+        variant: 'destructive'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Load Real-time Exchange Rates from public API
   useEffect(() => {
@@ -58,6 +129,22 @@ export default function Profile({ currentUser, onProfileUpdate }) {
       }
     };
     fetchRates();
+  }, []);
+
+  // Fetch Telegram Bot Username info
+  useEffect(() => {
+    const fetchBotInfo = async () => {
+      try {
+        const res = await fetch('/api/telegram-info');
+        const data = await res.json();
+        if (data && data.username) {
+          setBotUsername(data.username);
+        }
+      } catch (err) {
+        console.warn('Failed to load telegram bot info:', err);
+      }
+    };
+    fetchBotInfo();
   }, []);
 
   const getConversionFactor = (fromCurrency, toCurrency) => {
@@ -90,7 +177,8 @@ export default function Profile({ currentUser, onProfileUpdate }) {
               method: defaultProfile.paymentDetails?.method || '',
               terms: defaultProfile.paymentDetails?.terms || ''
             },
-            isPremium: !!defaultProfile.isPremium
+            isPremium: !!defaultProfile.isPremium,
+            photoURL: defaultProfile.photoURL || ''
           });
         }
 
@@ -150,30 +238,163 @@ export default function Profile({ currentUser, onProfileUpdate }) {
     }
   };
 
-  // Toggle Premium / Membership (local mock simulation)
+  // Toggle Premium / Membership via Paytm gateway
   const handleTogglePremium = async () => {
     if (!currentUser) return;
-    const nextPremium = !profile.isPremium;
+    
+    // Downgrade path for sandbox testing
+    if (profile.isPremium) {
+      try {
+        setLoading(true);
+        const updatedProfile = {
+          ...profile,
+          isPremium: false
+        };
+        await dbSaveDefaultProfile(currentUser.uid, updatedProfile);
+        setProfile(updatedProfile);
+        if (onProfileUpdate) onProfileUpdate(updatedProfile);
+
+        toast({
+          title: 'Downgraded to Free Plan',
+          description: 'You have returned to the free tier. Watermarks and advertisements will be restored.',
+        });
+      } catch (err) {
+        toast({
+          title: 'Update Failed',
+          description: err.message,
+          variant: 'destructive'
+        });
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // Determine price dynamically based on currency settings
+    const paymentAmount = profile.currency === 'INR' ? 99 : 9;
+    const paymentCurrency = profile.currency || 'USD';
+
     try {
       setLoading(true);
-      const updatedProfile = {
-        ...profile,
-        isPremium: nextPremium
-      };
-      await dbSaveDefaultProfile(currentUser.uid, updatedProfile);
-      setProfile(updatedProfile);
-      if (onProfileUpdate) onProfileUpdate(updatedProfile);
 
-      toast({
-        title: nextPremium ? 'Upgraded to Premium!' : 'Downgraded to Free Plan',
-        description: nextPremium 
-          ? 'Upgrade complete! Watermarks and advertisements have been removed.' 
-          : 'You are now on the free tier. Watermarks and advertisements will be restored.',
-        variant: nextPremium ? 'success' : 'default'
+      // 1. Call backend to initiate Paytm session and obtain txnToken
+      const initRes = await fetch('/api/paytm/initiate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          amount: paymentAmount,
+          currency: paymentCurrency,
+          userId: currentUser.uid
+        })
       });
+
+      if (!initRes.ok) {
+        const errData = await initRes.json();
+        throw new Error(errData.error || 'Failed to initiate payment.');
+      }
+
+      const paymentData = await initRes.json();
+      const { txnToken, orderId, amount: returnedAmount, mid, isMock } = paymentData;
+
+      // 2. If it is a mock token, skip Paytm JS loading and complete instantly
+      if (isMock) {
+        console.log('[Paytm Checkout] Mock transaction completed successfully.');
+        const updatedProfile = {
+          ...profile,
+          isPremium: true,
+          subscriptionPaymentId: 'MOCK_PAYTM_' + orderId
+        };
+        await dbSaveDefaultProfile(currentUser.uid, updatedProfile);
+        setProfile(updatedProfile);
+        if (onProfileUpdate) onProfileUpdate(updatedProfile);
+
+        toast({
+          title: paymentData.warning ? 'Sandbox Simulator Active' : 'Upgrade Successful!',
+          description: paymentData.warning 
+            ? `${paymentData.warning} Your account has been simulated as Premium.`
+            : `Welcome to Premium! Mock Order ID: ${orderId}`,
+          variant: paymentData.warning ? 'default' : 'success'
+        });
+        setLoading(false);
+        return;
+      }
+
+      // 3. Launch Paytm JS Checkout popup
+      const config = {
+        "root": "",
+        "flow": "DEFAULT",
+        "merchantName": "BillStacker",
+        "merchant": {
+          "name": "BillStacker"
+        },
+        "data": {
+          "orderId": orderId,
+          "token": txnToken,
+          "tokenType": "TXN_TOKEN",
+          "amount": returnedAmount
+        },
+        "handler": {
+          "transactionStatus": async function(data) {
+            console.log("[Paytm JS Callback Data]:", data);
+            if (data && (data.STATUS === 'TXN_SUCCESS' || data.resultInfo?.resultStatus === 'TXN_SUCCESS')) {
+              try {
+                setLoading(true);
+                const updatedProfile = {
+                  ...profile,
+                  isPremium: true,
+                  subscriptionPaymentId: data.TXNID || data.orderId || orderId
+                };
+                await dbSaveDefaultProfile(currentUser.uid, updatedProfile);
+                setProfile(updatedProfile);
+                if (onProfileUpdate) onProfileUpdate(updatedProfile);
+
+                toast({
+                  title: 'Upgrade Successful!',
+                  description: `Welcome to BillStacker Premium! Transaction ID: ${data.TXNID || orderId}`,
+                  variant: 'success'
+                });
+              } catch (err) {
+                toast({
+                  title: 'Upgrade Save Failed',
+                  description: err.message,
+                  variant: 'destructive'
+                });
+              } finally {
+                setLoading(false);
+              }
+            } else {
+              toast({
+                title: 'Transaction Failed',
+                description: data.RESPMSG || 'Payment unsuccessful.',
+                variant: 'destructive'
+              });
+            }
+          },
+          "notifyMerchant": function(eventName, notifyData) {
+            console.log("[Paytm JS Notification]:", eventName, notifyData);
+          }
+        }
+      };
+
+      if (window.Paytm && window.Paytm.CheckoutJS) {
+        window.Paytm.CheckoutJS.init(config).then(function onSuccess() {
+          window.Paytm.CheckoutJS.invoke();
+        }).catch(function onError(err) {
+          toast({
+            title: 'Paytm Load Error',
+            description: err.message || 'Paytm modal failed to load.',
+            variant: 'destructive'
+          });
+        });
+      } else {
+        throw new Error('Paytm JS SDK not ready. Please check your internet connection and try again.');
+      }
+
     } catch (err) {
       toast({
-        title: 'Subscription Update Failed',
+        title: 'Upgrade Failed',
         description: err.message,
         variant: 'destructive'
       });
@@ -249,7 +470,7 @@ export default function Profile({ currentUser, onProfileUpdate }) {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in-50 duration-300">
+    <div className="max-w-4xl mx-auto px-4 py-2 space-y-6 animate-in fade-in-50 duration-300">
       
       {/* Account Info Header */}
       <div className={`flex flex-col sm:flex-row items-center justify-between p-6 rounded-2xl gap-4 border transition-all duration-300 ${
@@ -258,17 +479,32 @@ export default function Profile({ currentUser, onProfileUpdate }) {
           : 'bg-slate-900/40 border-slate-800'
       }`}>
         <div className="flex items-center gap-4 text-center sm:text-left flex-col sm:flex-row">
-          {currentUser.photoURL ? (
-            <img src={currentUser.photoURL} alt="Avatar" className={`w-16 h-16 rounded-full border-2 shadow-md ${
-              profile.isPremium ? 'border-amber-400' : 'border-violet-500'
-            }`} />
-          ) : (
-            <div className={`w-16 h-16 rounded-full border flex items-center justify-center ${
-              profile.isPremium ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : 'bg-violet-600/20 text-violet-400 border-violet-500/30'
-            }`}>
-              <User className="w-8 h-8" />
-            </div>
-          )}
+          <div className="relative group cursor-pointer w-16 h-16 shrink-0">
+            <img 
+              src={profile.photoURL || currentUser.photoURL || DEFAULT_AVATAR} 
+              alt="Avatar" 
+              className={`w-16 h-16 rounded-full border-2 object-cover shadow-md transition-all group-hover:brightness-50 ${
+                profile.isPremium ? 'border-amber-400' : 'border-violet-500'
+              }`}
+              onError={(e) => {
+                e.target.src = DEFAULT_AVATAR;
+              }}
+            />
+            <label 
+              htmlFor="avatar-file-input" 
+              className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+              title="Change Profile Photo"
+            >
+              <Camera className="w-5 h-5 text-white" />
+            </label>
+            <input 
+              type="file" 
+              id="avatar-file-input" 
+              accept="image/*" 
+              onChange={handleAvatarChange} 
+              className="hidden" 
+            />
+          </div>
           <div>
             <div className="flex flex-col sm:flex-row items-center gap-2">
               <h1 className="text-xl font-extrabold text-white leading-none">{currentUser.displayName || 'Member'}</h1>
@@ -362,6 +598,61 @@ export default function Profile({ currentUser, onProfileUpdate }) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Telegram Bot Integration Card */}
+      <Card className="glass-panel border border-slate-850 bg-slate-900/40">
+        <CardHeader>
+          <CardTitle className="text-lg font-bold flex items-center gap-2">
+            <svg className="w-5 h-5 text-sky-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m22 2-7 20-4-9-9-4Z" />
+              <path d="M22 2 11 13" />
+            </svg>
+            Telegram Bot Integration
+          </CardTitle>
+          <CardDescription>
+            Connect your BillStacker account to track invoices, check billing summaries, and receive updates directly on Telegram.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {profile.telegramChatId ? (
+            <div className="flex flex-col sm:flex-row items-center justify-between p-4 rounded-xl bg-sky-950/20 border border-sky-500/30 gap-4 text-center sm:text-left">
+              <div className="flex items-center gap-3 flex-col sm:flex-row">
+                <span className="w-3 h-3 rounded-full bg-sky-400 inline-block animate-pulse shrink-0" />
+                <div>
+                  <div className="text-sm font-bold text-white">Bot Connected Successfully</div>
+                  <div className="text-xs text-sky-300/80 mt-0.5">Linked Chat ID: {profile.telegramChatId}</div>
+                </div>
+              </div>
+              <Button 
+                type="button" 
+                onClick={() => window.open(`https://t.me/${botUsername}`, '_blank')}
+                className="text-xs h-9 bg-sky-600 hover:bg-sky-500 text-white font-bold px-4 border-0 shadow-md shadow-sky-900/30"
+              >
+                Open Chat in Telegram
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row items-center justify-between p-4 rounded-xl bg-slate-900/60 border border-slate-800 gap-4 text-center sm:text-left">
+              <div>
+                <div className="text-sm font-bold text-slate-300">Status: Not Linked</div>
+                <div className="text-xs text-slate-500 mt-1">Connect your account to enable commands like `/invoices` and `/stats` directly in Telegram.</div>
+              </div>
+              <Button 
+                type="button" 
+                onClick={() => {
+                  window.open(`https://t.me/${botUsername}?start=${currentUser.uid}`, '_blank');
+                }}
+                className="text-xs h-9 bg-sky-600 hover:bg-sky-500 text-white font-bold px-4 border-0 shadow-lg shadow-sky-900/30 flex items-center gap-2"
+              >
+                <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.2-.08-.06-.19-.04-.27-.02-.12.02-1.96 1.25-5.54 3.69-.52.36-1 .53-1.42.52-.47-.01-1.37-.27-2.03-.49-.82-.27-1.47-.42-1.41-.88.03-.24.37-.48 1.02-.73 3.98-1.73 6.64-2.88 7.99-3.45 3.8-1.61 4.59-1.89 5.1-.19.01.01.01.02.02.04z" />
+                </svg>
+                Connect Telegram Bot
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Default Settings Editor Form */}
       <form onSubmit={handleSaveProfile}>
@@ -468,6 +759,24 @@ export default function Profile({ currentUser, onProfileUpdate }) {
           </CardContent>
         </Card>
       </form>
+
+      {/* Support & Feedback Section */}
+      <div className="mt-8 border-t border-slate-850 pt-8">
+        <div className="space-y-4">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-violet-650/10 text-violet-400 rounded-xl">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-base font-extrabold text-white tracking-tight">Help, Support & Feedback</h2>
+              <p className="text-[11px] text-slate-500 mt-0.5">Submit tickets directly to platform administrators and monitor active responses.</p>
+            </div>
+          </div>
+          <SupportFeedback currentUser={currentUser} />
+        </div>
+      </div>
 
     </div>
   );

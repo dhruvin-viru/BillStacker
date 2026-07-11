@@ -34,6 +34,8 @@ import {
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import AdBanner from './AdBanner';
+import NativeAdBanner from './NativeAdBanner';
 
 export default function Dashboard({ currentUser, onEditInvoice, triggerRefreshTab }) {
   const [invoices, setInvoices] = useState([]);
@@ -672,6 +674,35 @@ export default function Dashboard({ currentUser, onEditInvoice, triggerRefreshTa
           )}
         </CardContent>
       </Card>
+
+      {/* Adsterra Banners & Native Ads */}
+      <div className="space-y-4 mt-8">
+        <div className="text-[10px] font-black text-slate-600 uppercase tracking-widest text-center">Sponsored Updates</div>
+        <NativeAdBanner isPremium={currentUser?.isPremium} />
+        {!currentUser?.isPremium && (
+              <div className="py-4 border-t border-b border-slate-850/80 my-4">
+                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center mb-2">Sponsor Feedback & Offers</div>
+                <NativeAdBanner isPremium={currentUser?.isPremium} />
+              </div>
+            )}
+        {/* Responsive footer banner */}
+        <AdBanner 
+          adKey="fc0ded85e24429b5a4db05e69a625aee" 
+          format="iframe" 
+          width={728} 
+          height={90} 
+          className="hidden md:flex mx-auto" 
+          isPremium={currentUser?.isPremium}
+        />
+        <AdBanner 
+          adKey="8933000d942a27ecc84dd3451f31535c" 
+          format="iframe" 
+          width={320} 
+          height={50} 
+          className="flex md:hidden mx-auto" 
+          isPremium={currentUser?.isPremium}
+        />
+      </div>
 
       {/* Delete Confirmation Modal */}
       <Dialog isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)}>

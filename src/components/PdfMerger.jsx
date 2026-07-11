@@ -2,6 +2,8 @@ import React, { useState, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { useToast } from './ui/toast';
+import AdBanner from './AdBanner';
+import NativeAdBanner from './NativeAdBanner';
 import { 
   UploadCloud, 
   File, 
@@ -19,7 +21,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
-export default function PdfMerger() {
+export default function PdfMerger({ currentUser }) {
   const [files, setFiles] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
@@ -447,52 +449,48 @@ export default function PdfMerger() {
                   <a
                     href={mergedResult.downloadUrl}
                     download={mergedResult.fileName}
-                    className="flex-1 sm:flex-initial"
+                    className="w-full sm:w-auto"
                   >
-                    <Button className="w-full h-10 gap-1.5 font-semibold text-xs">
+                    <Button className="w-full h-10 gap-1.5 font-semibold text-xs px-6">
                       <Download className="w-3.5 h-3.5" />
                       Download PDF
                     </Button>
                   </a>
-
-                  {!mergedResult.isCompressed && (
-                    <Button
-                      variant="outline"
-                      onClick={handleCompressMerged}
-                      isLoading={isCompressing}
-                      className="flex-1 sm:flex-initial h-10 text-xs border-violet-850 hover:bg-violet-600 hover:text-white gap-1.5"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      Compress PDF
-                    </Button>
-                  )}
                 </div>
               </div>
-
-              {/* Compression metrics if performed */}
-              {mergedResult.isCompressed && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 bg-violet-950/20 border border-violet-900/40 rounded-xl relative overflow-hidden">
-                  <Percent className="absolute right-2 bottom-2 w-12 h-12 text-violet-500/10 pointer-events-none" />
-                  <div>
-                    <span className="text-[10px] text-slate-450 uppercase font-bold tracking-wider">Original Merged</span>
-                    <div className="text-sm font-bold text-slate-300 mt-0.5">{formatBytes(mergedResult.originalSize)}</div>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-450 uppercase font-bold tracking-wider">Optimized Size</span>
-                    <div className="text-sm font-bold text-violet-450 mt-0.5">{formatBytes(mergedResult.compressedSize)}</div>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-violet-400 uppercase font-bold tracking-wider">Disk Saved</span>
-                    <div className="text-sm font-extrabold text-emerald-450 mt-0.5">{mergedResult.savedPercent}% smaller</div>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
         </CardContent>
       </Card>
 
+      {/* Native Ad Banner and Divider */}
+      {!currentUser?.isPremium && (
+        <div className="py-4 border-t border-b border-slate-850/80 my-4 w-full">
+          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center mb-2">Sponsor Feedback & Offers</div>
+          <NativeAdBanner isPremium={currentUser?.isPremium} />
+        </div>
+      )}
+
+      {/* Footer Banner Ad */}
+      <div className="pt-6 border-t border-slate-850/60 mt-8 w-full">
+        <AdBanner 
+          adKey="fc0ded85e24429b5a4db05e69a625aee" 
+          format="iframe" 
+          width={728} 
+          height={90} 
+          className="hidden md:flex mx-auto" 
+          isPremium={currentUser?.isPremium}
+        />
+        <AdBanner 
+          adKey="8933000d942a27ecc84dd3451f31535c" 
+          format="iframe" 
+          width={320} 
+          height={50} 
+          className="flex md:hidden mx-auto" 
+          isPremium={currentUser?.isPremium}
+        />
+      </div>
     </div>
   );
 }

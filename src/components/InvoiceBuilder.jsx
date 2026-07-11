@@ -11,6 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Input, Textarea, Select, Label } from './ui/input';
 import { Button } from './ui/button';
 import { useToast } from './ui/toast';
+import AdBanner from './AdBanner';
+import NativeAdBanner from './NativeAdBanner';
 import { 
   Plus, 
   Trash2, 
@@ -596,10 +598,10 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in-50 duration-300">
+    <div className="space-y-8 max-w-4xl mx-auto animate-in fade-in-50 duration-300">
       
-      {/* Left Pane - Forms (lg:col-span-7) */}
-      <div className="lg:col-span-7 space-y-6">
+      {/* Left Pane - Forms (Full Width) */}
+      <div className="space-y-6">
         
         {!currentUser && (
           <div className="flex items-center gap-3 p-3 bg-violet-950/20 border border-violet-900/40 rounded-xl text-violet-250 text-xs">
@@ -982,23 +984,19 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
           </Button>
         </div>
 
-        {/* Sponsored Ad Widget */}
-        {!currentUser?.isPremium && (
-          <div className="p-4 bg-slate-950/40 border border-slate-850 rounded-xl relative overflow-hidden flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 animate-in fade-in duration-300">
-            <div>
-              <div className="inline-block px-1.5 py-0.5 rounded bg-violet-900/30 text-violet-450 text-[9px] font-bold uppercase tracking-wider mb-1.5">Sponsored</div>
-              <p className="text-xs text-slate-200 font-semibold">Want to remove watermarks and ads?</p>
-              <p className="text-[10px] text-slate-500 mt-0.5 font-medium">Unlock clean, professional vector PDFs with BillStacker Premium.</p>
-            </div>
-            <div className="text-[10px] font-bold text-violet-400 select-none uppercase tracking-wider bg-violet-900/10 px-2.5 py-1 rounded-md shrink-0 border border-violet-900/30">Ad Free Upgrade</div>
-          </div>
-        )}
-
       </div>
 
-      {/* Right Pane - Live Preview Sheet (lg:col-span-5) */}
-      <div className="lg:col-span-5 relative">
-        <div className="sticky top-24 space-y-4">
+      {/* Native Ad Banner and Divider */}
+      {!currentUser?.isPremium && (
+        <div className="py-4 border-t border-b border-slate-850/80 my-4">
+          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center mb-2">Sponsor Feedback & Offers</div>
+          <NativeAdBanner isPremium={currentUser?.isPremium} />
+        </div>
+      )}
+
+      {/* Right Pane - Live Preview Sheet (Full Width Stack) */}
+      <div className="w-full relative">
+        <div className="space-y-4">
           <div className="flex items-center justify-between select-none">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -1252,6 +1250,31 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
         </div>
       </div>
 
+      {/* Footer Banner Ad */}
+      {!currentUser?.isPremium && (
+      <div className="py-4 border-t border-b border-slate-850/80 my-4">
+        <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center mb-2">Sponsor Feedback & Offers</div>
+        <NativeAdBanner isPremium={currentUser?.isPremium} />
+      </div>
+    )}
+      <div className="pt-6 border-t border-slate-850/60 mt-12 w-full">
+        <AdBanner 
+          adKey="fc0ded85e24429b5a4db05e69a625aee" 
+          format="iframe" 
+          width={728} 
+          height={90} 
+          className="hidden md:flex mx-auto" 
+          isPremium={currentUser?.isPremium}
+        />
+        <AdBanner 
+          adKey="8933000d942a27ecc84dd3451f31535c" 
+          format="iframe" 
+          width={320} 
+          height={50} 
+          className="flex md:hidden mx-auto" 
+          isPremium={currentUser?.isPremium}
+        />
+      </div>
     </div>
   );
 }
