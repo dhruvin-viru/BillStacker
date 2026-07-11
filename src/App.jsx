@@ -70,6 +70,7 @@ function AppContent() {
 
           const isEmailAdmin = user.email?.toLowerCase() === 'admin@billstacker.com';
 
+          // Force premium upgrade for all active profiles during launch promo
           if (!profile) {
             profile = {
               senderInfo: { name: user.displayName || 'Admin', email: user.email || '' },
@@ -78,6 +79,9 @@ function AppContent() {
               isAdmin: isEmailAdmin,
               joinedDate: new Date().toISOString()
             };
+            await dbSaveDefaultProfile(user.uid, profile);
+          } else if (!profile.isPremium) {
+            profile.isPremium = true;
             await dbSaveDefaultProfile(user.uid, profile);
           } else if (isEmailAdmin && !profile.isAdmin) {
             // Self-healing database check: Promote admin email to isAdmin
@@ -91,7 +95,7 @@ function AppContent() {
             displayName: user.displayName,
             email: user.email,
             photoURL: profile?.photoURL || user.photoURL,
-            isPremium: !!profile?.isPremium,
+            isPremium: true,
             isAdmin: !!profile?.isAdmin
           });
         } catch (e) {
@@ -189,24 +193,11 @@ function AppContent() {
   // Conditionally inject or remove Social Bar ad script based on premium status
   useEffect(() => {
     const existingScript = document.getElementById('social-bar-ad-script');
-    
-    if (currentUser?.isPremium) {
-      if (existingScript) {
-        existingScript.remove();
-        console.log('[Ad Blocker] Premium tier active. Social Bar ad removed.');
-      }
-      return;
+    if (existingScript) {
+      existingScript.remove();
+      console.log('[Ad Blocker] Social Bar ad removed.');
     }
-
-    if (!existingScript) {
-      const script = document.createElement('script');
-      script.id = 'social-bar-ad-script';
-      script.src = 'https://pl30272501.effectivecpmnetwork.com/c3/2e/f8/c32ef8ac7b9166573fd59697df02f9f2.js';
-      script.async = true;
-      document.body.appendChild(script);
-      console.log('[Ad Engine] Free tier active. Social Bar ad initialized.');
-    }
-  }, [currentUser]);
+  }, []);
 
   // Handle URL Payment Callbacks
   useEffect(() => {

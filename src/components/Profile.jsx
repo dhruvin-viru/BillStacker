@@ -238,169 +238,8 @@ export default function Profile({ currentUser, onProfileUpdate }) {
     }
   };
 
-  // Toggle Premium / Membership via Paytm gateway
-  const handleTogglePremium = async () => {
-    if (!currentUser) return;
-    
-    // Downgrade path for sandbox testing
-    if (profile.isPremium) {
-      try {
-        setLoading(true);
-        const updatedProfile = {
-          ...profile,
-          isPremium: false
-        };
-        await dbSaveDefaultProfile(currentUser.uid, updatedProfile);
-        setProfile(updatedProfile);
-        if (onProfileUpdate) onProfileUpdate(updatedProfile);
-
-        toast({
-          title: 'Downgraded to Free Plan',
-          description: 'You have returned to the free tier. Watermarks and advertisements will be restored.',
-        });
-      } catch (err) {
-        toast({
-          title: 'Update Failed',
-          description: err.message,
-          variant: 'destructive'
-        });
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
-    // Determine price dynamically based on currency settings
-    const paymentAmount = profile.currency === 'INR' ? 99 : 9;
-    const paymentCurrency = profile.currency || 'USD';
-
-    try {
-      setLoading(true);
-
-      // 1. Call backend to initiate Paytm session and obtain txnToken
-      const initRes = await fetch('/api/paytm/initiate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          amount: paymentAmount,
-          currency: paymentCurrency,
-          userId: currentUser.uid
-        })
-      });
-
-      if (!initRes.ok) {
-        const errData = await initRes.json();
-        throw new Error(errData.error || 'Failed to initiate payment.');
-      }
-
-      const paymentData = await initRes.json();
-      const { txnToken, orderId, amount: returnedAmount, mid, isMock } = paymentData;
-
-      // 2. If it is a mock token, skip Paytm JS loading and complete instantly
-      if (isMock) {
-        console.log('[Paytm Checkout] Mock transaction completed successfully.');
-        const updatedProfile = {
-          ...profile,
-          isPremium: true,
-          subscriptionPaymentId: 'MOCK_PAYTM_' + orderId
-        };
-        await dbSaveDefaultProfile(currentUser.uid, updatedProfile);
-        setProfile(updatedProfile);
-        if (onProfileUpdate) onProfileUpdate(updatedProfile);
-
-        toast({
-          title: paymentData.warning ? 'Sandbox Simulator Active' : 'Upgrade Successful!',
-          description: paymentData.warning 
-            ? `${paymentData.warning} Your account has been simulated as Premium.`
-            : `Welcome to Premium! Mock Order ID: ${orderId}`,
-          variant: paymentData.warning ? 'default' : 'success'
-        });
-        setLoading(false);
-        return;
-      }
-
-      // 3. Launch Paytm JS Checkout popup
-      const config = {
-        "root": "",
-        "flow": "DEFAULT",
-        "merchantName": "BillStacker",
-        "merchant": {
-          "name": "BillStacker"
-        },
-        "data": {
-          "orderId": orderId,
-          "token": txnToken,
-          "tokenType": "TXN_TOKEN",
-          "amount": returnedAmount
-        },
-        "handler": {
-          "transactionStatus": async function(data) {
-            console.log("[Paytm JS Callback Data]:", data);
-            if (data && (data.STATUS === 'TXN_SUCCESS' || data.resultInfo?.resultStatus === 'TXN_SUCCESS')) {
-              try {
-                setLoading(true);
-                const updatedProfile = {
-                  ...profile,
-                  isPremium: true,
-                  subscriptionPaymentId: data.TXNID || data.orderId || orderId
-                };
-                await dbSaveDefaultProfile(currentUser.uid, updatedProfile);
-                setProfile(updatedProfile);
-                if (onProfileUpdate) onProfileUpdate(updatedProfile);
-
-                toast({
-                  title: 'Upgrade Successful!',
-                  description: `Welcome to BillStacker Premium! Transaction ID: ${data.TXNID || orderId}`,
-                  variant: 'success'
-                });
-              } catch (err) {
-                toast({
-                  title: 'Upgrade Save Failed',
-                  description: err.message,
-                  variant: 'destructive'
-                });
-              } finally {
-                setLoading(false);
-              }
-            } else {
-              toast({
-                title: 'Transaction Failed',
-                description: data.RESPMSG || 'Payment unsuccessful.',
-                variant: 'destructive'
-              });
-            }
-          },
-          "notifyMerchant": function(eventName, notifyData) {
-            console.log("[Paytm JS Notification]:", eventName, notifyData);
-          }
-        }
-      };
-
-      if (window.Paytm && window.Paytm.CheckoutJS) {
-        window.Paytm.CheckoutJS.init(config).then(function onSuccess() {
-          window.Paytm.CheckoutJS.invoke();
-        }).catch(function onError(err) {
-          toast({
-            title: 'Paytm Load Error',
-            description: err.message || 'Paytm modal failed to load.',
-            variant: 'destructive'
-          });
-        });
-      } else {
-        throw new Error('Paytm JS SDK not ready. Please check your internet connection and try again.');
-      }
-
-    } catch (err) {
-      toast({
-        title: 'Upgrade Failed',
-        description: err.message,
-        variant: 'destructive'
-      });
-    } finally {
-      setLoading(false);
-    }
+  const handleTogglePremium = () => {
+    // Payment controls deactivated during global premium campaign
   };
 
   // Handle Authentication trigger
@@ -508,15 +347,9 @@ export default function Profile({ currentUser, onProfileUpdate }) {
           <div>
             <div className="flex flex-col sm:flex-row items-center gap-2">
               <h1 className="text-xl font-extrabold text-white leading-none">{currentUser.displayName || 'Member'}</h1>
-              {profile.isPremium ? (
-                <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 shadow-md shadow-amber-500/25">
-                  PRO MEMBER
-                </span>
-              ) : (
-                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
-                  FREE TIER
-                </span>
-              )}
+              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 shadow-md shadow-amber-500/25">
+                PREMIUM MEMBER
+              </span>
             </div>
             <p className="text-sm text-slate-400 flex items-center justify-center sm:justify-start gap-1 mt-1.5 leading-none">
               <Mail className="w-3.5 h-3.5" />
@@ -525,31 +358,7 @@ export default function Profile({ currentUser, onProfileUpdate }) {
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
-          {profile.isPremium ? (
-            <Button 
-              type="button"
-              onClick={handleTogglePremium} 
-              variant="outline"
-              className="text-xs h-10 border-slate-700 hover:bg-slate-800 text-slate-300 w-full sm:w-auto"
-            >
-              Downgrade Plan
-            </Button>
-          ) : (
-            <Button 
-              type="button"
-              onClick={handleTogglePremium} 
-              className="text-xs h-10 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 font-bold shadow-lg shadow-violet-900/35 w-full sm:w-auto shrink-0 border-0"
-            >
-              {profile.currency === 'INR' 
-                ? 'Upgrade to Premium (₹99)' 
-                : profile.currency === 'EUR' 
-                ? 'Upgrade to Premium (€9)' 
-                : 'Upgrade to Premium ($9)'
-              }
-            </Button>
-          )}
-          
+        <div className="flex flex-col sm:flex-row items-center justify-end gap-3 w-full sm:w-auto">
           <Button onClick={handleLogout} variant="ghost" className="text-slate-400 hover:text-rose-500 gap-1.5 h-10 w-full sm:w-auto">
             <LogOut className="w-4 h-4" />
             Sign Out

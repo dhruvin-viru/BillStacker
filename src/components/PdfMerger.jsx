@@ -464,33 +464,7 @@ export default function PdfMerger({ currentUser }) {
         </CardContent>
       </Card>
 
-      {/* Native Ad Banner and Divider */}
-      {!currentUser?.isPremium && (
-        <div className="py-4 border-t border-b border-slate-850/80 my-4 w-full">
-          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center mb-2">Sponsor Feedback & Offers</div>
-          <NativeAdBanner isPremium={currentUser?.isPremium} />
-        </div>
-      )}
-
-      {/* Footer Banner Ad */}
-      <div className="pt-6 border-t border-slate-850/60 mt-8 w-full">
-        <AdBanner 
-          adKey="fc0ded85e24429b5a4db05e69a625aee" 
-          format="iframe" 
-          width={728} 
-          height={90} 
-          className="hidden md:flex mx-auto" 
-          isPremium={currentUser?.isPremium}
-        />
-        <AdBanner 
-          adKey="8933000d942a27ecc84dd3451f31535c" 
-          format="iframe" 
-          width={320} 
-          height={50} 
-          className="flex md:hidden mx-auto" 
-          isPremium={currentUser?.isPremium}
-        />
-      </div>
+      {/* Ad Banners Removed */}
     </div>
   );
 }

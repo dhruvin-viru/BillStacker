@@ -219,67 +219,30 @@ export default function LandingPage({ currentUser, onSelectTab, onOpenAuth }) {
         </div>
       </section>
 
-      {/* Pricing Cards */}
-      <section className="space-y-6 px-4">
-        <div className="text-center max-w-xl mx-auto space-y-2">
-          <h2 className="text-2xl sm:text-3xl font-extrabold text-white">Simple, Dynamic Pricing</h2>
-          <p className="text-sm text-slate-400">Upgrade to remove limits and unlock premium templates.</p>
-        </div>
-
-        <div className="grid gap-6 grid-cols-1 md:grid-cols-2 max-w-3xl mx-auto">
-          {/* Free Tier */}
-          <Card className="glass-card border border-slate-900/60 p-6 relative overflow-hidden flex flex-col justify-between">
-            <div className="space-y-4">
-              <div className="text-slate-400 text-xs font-bold uppercase tracking-wider">Free Plan</div>
-              <div className="text-3xl font-black text-white">₹0 <span className="text-xs text-slate-500 font-semibold">/ forever</span></div>
-              <p className="text-xs text-slate-400">Essential tools for single invoices and merge utilities.</p>
-              
-              <ul className="space-y-2 text-xs text-slate-300 pt-2">
-                <li className="flex items-center gap-2"><Check className="w-4 h-4 text-emerald-500 shrink-0" /> Full access to all 4 core tools</li>
-                <li className="flex items-center gap-2"><Check className="w-4 h-4 text-emerald-500 shrink-0" /> Basic invoice designs</li>
-                <li className="flex items-center gap-2 font-medium text-slate-500"><Check className="w-4 h-4 text-slate-650 shrink-0" /> Dynamic ad layouts active</li>
-                <li className="flex items-center gap-2 font-medium text-slate-500"><Check className="w-4 h-4 text-slate-650 shrink-0" /> BillStacker watermark on prints</li>
-              </ul>
-            </div>
+      {/* Premium Trial Banner */}
+      <section className="px-4 max-w-4xl mx-auto">
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-900 via-violet-950/20 to-indigo-950/20 border border-violet-500/30 p-8 shadow-xl shadow-violet-950/10 text-center space-y-4">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute bottom-0 left-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
+          
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-violet-500 text-white shadow-md">
+            <Sparkles className="w-3.5 h-3.5" />
+            Promo Active: 100% Free
+          </div>
+          
+          <h2 className="text-2xl sm:text-3xl font-black text-white">Unlock All Premium Features</h2>
+          <p className="text-sm text-slate-300 max-w-2xl mx-auto leading-relaxed">
+            We are celebrating our platform launch! For the next 2 months, every single user receives access to all <strong>Pro features</strong> (including premium styles, PDF operations, and image compilations) completely free of charge. No credit card or payments are required, and all documents are exported with zero advertisements or watermark tags.
+          </p>
+          
+          <div className="pt-2">
             <Button 
-              variant="outline" 
               onClick={() => onSelectTab('builder')}
-              className="mt-6 border-slate-800 hover:bg-slate-900 font-semibold"
+              className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-xs h-11 px-8 rounded-xl shadow-lg shadow-violet-900/35 border-0"
             >
-              Get Started
+              Start Creating Now
             </Button>
-          </Card>
-
-          {/* Premium Tier */}
-          <Card className="glass-panel border border-violet-500/30 p-6 relative overflow-hidden flex flex-col justify-between shadow-xl shadow-violet-950/20">
-            <div className="absolute top-0 right-0 w-24 h-24 bg-violet-600/10 rounded-full blur-2xl pointer-events-none" />
-            <div className="absolute -top-3.5 -right-3.5 w-16 h-16 bg-violet-600 flex items-center justify-center rotate-45 text-white font-extrabold text-[9px] shadow-lg shadow-violet-500/20 pt-7">
-              PRO
-            </div>
-
-            <div className="space-y-4">
-              <div className="text-violet-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                Premium Plan
-              </div>
-              <div className="text-3xl font-black text-white">₹99 <span className="text-xs text-slate-500 font-semibold">/ month ($9/€9 outside India)</span></div>
-              <p className="text-xs text-slate-400">Maximize document efficiency with premium branding assets.</p>
-              
-              <ul className="space-y-2 text-xs text-slate-200 pt-2">
-                <li className="flex items-center gap-2"><Check className="w-4 h-4 text-violet-400 shrink-0" /> **Remove all watermarks** from printed PDFs</li>
-                <li className="flex items-center gap-2"><Check className="w-4 h-4 text-violet-400 shrink-0" /> **Ad-free workspaces** on all tools</li>
-                <li className="flex items-center gap-2"><Check className="w-4 h-4 text-violet-400 shrink-0" /> Unlock premium compact & borderless styles</li>
-                <li className="flex items-center gap-2"><Check className="w-4 h-4 text-violet-400 shrink-0" /> Auto-sync default configurations to the cloud</li>
-              </ul>
-            </div>
-            
-            <Button 
-              onClick={() => onSelectTab('profile')}
-              className="mt-6 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold border-0 shadow-lg shadow-violet-900/35"
-            >
-              Upgrade Now
-            </Button>
-          </Card>
+          </div>
         </div>
       </section>
 
@@ -474,27 +437,7 @@ export default function LandingPage({ currentUser, onSelectTab, onOpenAuth }) {
         </Card>
       </section>
 
-      {/* Adsterra Banners (Desktop and Mobile sizes) */}
-      <div className="max-w-7xl mx-auto px-4 my-8">
-        {/* Large screen: 728x90 Leaderboard banner */}
-        <AdBanner 
-          adKey="fc0ded85e24429b5a4db05e69a625aee" 
-          format="iframe" 
-          width={728} 
-          height={90} 
-          className="hidden md:flex mx-auto" 
-          isPremium={currentUser?.isPremium}
-        />
-        {/* Small screen: 320x50 Mobile banner */}
-        <AdBanner 
-          adKey="8933000d942a27ecc84dd3451f31535c" 
-          format="iframe" 
-          width={320} 
-          height={50} 
-          className="flex md:hidden mx-auto" 
-          isPremium={currentUser?.isPremium}
-        />
-      </div>
+      {/* Adsterra Banners Removed */}
 
       {/* Blog Reader Modal Dialog */}
       {selectedBlog && (

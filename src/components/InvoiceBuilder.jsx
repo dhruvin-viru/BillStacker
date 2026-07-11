@@ -216,7 +216,7 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
               ...prev,
               senderInfo: { ...prev.senderInfo, ...profile.senderInfo },
               currency: profile.currency || prev.currency,
-              paymentDetails: { ...prev.paymentDetails, ...profile.paymentDetails }
+              paymentDetails: { ...prev.paymentDetails, ...(profile.paymentDetails || {}) }
             }));
             profileLoaded = true;
             toast({
@@ -318,7 +318,13 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
   // Sync edit state
   useEffect(() => {
     if (editInvoiceData) {
-      setInvoice(editInvoiceData);
+      setInvoice({
+        ...initialInvoiceState,
+        ...editInvoiceData,
+        senderInfo: { ...initialInvoiceState.senderInfo, ...(editInvoiceData.senderInfo || {}) },
+        clientInfo: { ...initialInvoiceState.clientInfo, ...(editInvoiceData.clientInfo || {}) },
+        paymentDetails: { ...initialInvoiceState.paymentDetails, ...(editInvoiceData.paymentDetails || {}) }
+      });
     } else {
       setInvoice({
         ...initialInvoiceState,
@@ -387,7 +393,7 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
   const handlePaymentChange = (field, val) => {
     setInvoice(prev => ({
       ...prev,
-      paymentDetails: { ...prev.paymentDetails, [field]: val }
+      paymentDetails: { ...(prev.paymentDetails || {}), [field]: val }
     }));
   };
 
@@ -918,7 +924,7 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
                 <Label>Payment Method</Label>
                 <Input 
                   placeholder="e.g. Bank Transfer, Stripe" 
-                  value={invoice.paymentDetails.method} 
+                  value={invoice.paymentDetails?.method || ''} 
                   onChange={(e) => handlePaymentChange('method', e.target.value)}
                 />
               </div>
@@ -926,7 +932,7 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
                 <Label>Payment Terms</Label>
                 <Input 
                   placeholder="e.g. Due on Receipt, Net 30" 
-                  value={invoice.paymentDetails.terms} 
+                  value={invoice.paymentDetails?.terms || ''} 
                   onChange={(e) => handlePaymentChange('terms', e.target.value)}
                 />
               </div>
@@ -986,13 +992,7 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
 
       </div>
 
-      {/* Native Ad Banner and Divider */}
-      {!currentUser?.isPremium && (
-        <div className="py-4 border-t border-b border-slate-850/80 my-4">
-          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center mb-2">Sponsor Feedback & Offers</div>
-          <NativeAdBanner isPremium={currentUser?.isPremium} />
-        </div>
-      )}
+      {/* Native Ad Banner and Divider Removed */}
 
       {/* Right Pane - Live Preview Sheet (Full Width Stack) */}
       <div className="w-full relative">
@@ -1042,8 +1042,8 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
 
                           <h4 className="text-[8px] font-bold text-slate-400 uppercase tracking-widest pb-1 mt-6 mb-2 border-b border-slate-100">Payment Details</h4>
                           <p className="text-[9px] text-slate-700 m-0.5">Currency: <strong>{invoice.currency}</strong></p>
-                          <p className="text-[9px] text-slate-500 m-0.5">Method: {invoice.paymentDetails.method || 'Bank Transfer'}</p>
-                          <p className="text-[9px] text-slate-500 m-0.5">Terms: {invoice.paymentDetails.terms || 'Net 14'}</p>
+                          <p className="text-[9px] text-slate-500 m-0.5">Method: {invoice.paymentDetails?.method || 'Bank Transfer'}</p>
+                          <p className="text-[9px] text-slate-500 m-0.5">Terms: {invoice.paymentDetails?.terms || 'Net 14'}</p>
                         </div>
 
                         <div className="mt-8 pt-4 border-t border-slate-100">
@@ -1122,9 +1122,7 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
                           </div>
                         </div>
                       </div>
-                      {!currentUser?.isPremium && (
-                        <div className="absolute bottom-6 left-6 text-[10px] font-black tracking-widest text-slate-300 opacity-30 uppercase rotate-[-15deg] select-none pointer-events-none">BillStacker</div>
-                      )}
+                      {/* Creative watermark removed */}
                     </div>
                   ) : (
                     /* Standard layout dynamically customized with themes */
@@ -1171,8 +1169,8 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
                         <div className="w-[45%] text-right">
                           <h4 className="text-[9px] font-bold opacity-60 uppercase tracking-widest border-b pb-1 mb-2" style={{ borderColor: 'inherit' }}>Payment Info</h4>
                           <p className="text-[10px] opacity-90 m-0.5">Currency: <strong>{invoice.currency}</strong></p>
-                          <p className="text-[10px] opacity-75 m-0.5">Method: {invoice.paymentDetails.method || 'Bank Transfer'}</p>
-                          <p className="text-[10px] opacity-75 m-0.5">Terms: {invoice.paymentDetails.terms || 'Net 14'}</p>
+                          <p className="text-[10px] opacity-75 m-0.5">Method: {invoice.paymentDetails?.method || 'Bank Transfer'}</p>
+                          <p className="text-[10px] opacity-75 m-0.5">Terms: {invoice.paymentDetails?.terms || 'Net 14'}</p>
                         </div>
                       </div>
 
@@ -1235,11 +1233,7 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
                         </div>
                       </div>
 
-                      {!currentUser?.isPremium && (
-                        <div className={`mt-8 pt-3 border-t border-dashed text-center text-[9px] select-none pointer-events-none opacity-60 w-full ${styles.borderColor} ${styles.primaryColor}`}>
-                          Powered by <span className="font-bold">BillStacker</span> • Free Invoice Suite
-                        </div>
-                      )}
+                      {/* Standard powered-by watermark removed */}
                     </>
                   )}
                   
@@ -1250,31 +1244,7 @@ export default function InvoiceBuilder({ currentUser, editInvoiceData, onSaveSuc
         </div>
       </div>
 
-      {/* Footer Banner Ad */}
-      {!currentUser?.isPremium && (
-      <div className="py-4 border-t border-b border-slate-850/80 my-4">
-        <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center mb-2">Sponsor Feedback & Offers</div>
-        <NativeAdBanner isPremium={currentUser?.isPremium} />
-      </div>
-    )}
-      <div className="pt-6 border-t border-slate-850/60 mt-12 w-full">
-        <AdBanner 
-          adKey="fc0ded85e24429b5a4db05e69a625aee" 
-          format="iframe" 
-          width={728} 
-          height={90} 
-          className="hidden md:flex mx-auto" 
-          isPremium={currentUser?.isPremium}
-        />
-        <AdBanner 
-          adKey="8933000d942a27ecc84dd3451f31535c" 
-          format="iframe" 
-          width={320} 
-          height={50} 
-          className="flex md:hidden mx-auto" 
-          isPremium={currentUser?.isPremium}
-        />
-      </div>
+      {/* Footer Banner Ad Removed */}
     </div>
   );
 }

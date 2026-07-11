@@ -854,6 +854,10 @@ router.post('/telegram-webhook', publicLimiter, async (req, res) => {
           currency: linkedProfile.currency || 'USD',
           taxRate: 0,
           discountRate: 0,
+          paymentDetails: {
+            method: 'Telegram Bot',
+            terms: 'Due on Receipt'
+          },
           notes: ''
         }
       });
